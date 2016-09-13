@@ -21,134 +21,200 @@ import static java.nio.file.StandardOpenOption.*;
 
 public class ExternalSort {
 
-    private static void merge(String f1, String f2, int BufferSize) throws IOException {
-        long blocksize = BufferSize;
-        System.out.println("BLOCKSIZE = " + blocksize);
-        Path wpath = Paths.get(f2);
-        ByteBuffer wbuf = ByteBuffer.allocate(BufferSize);
-        ByteBuffer abuf;
+    private static void merge(String f1, String f2, int bufsize) throws IOException {
+        long blocksize = bufsize;
 
-        AsynchronousFileChannel wafc = AsynchronousFileChannel.open(wpath, WRITE, READ, CREATE);
+        AsynchronousFileChannel wafc;
+
         Future wresult = null;
         long wloc = 0;
         long written = 0;
+        boolean swapfiles = false;
+        FileBlock[] blocks;
 
-        FileSection fs1, fs2;
-        long filesize = wafc.size();
-        boolean popfirst = false;
-        boolean swapfiles = true;
-        while (blocksize < filesize){
-            abuf = ByteBuffer.allocate(BufferSize);
+        FileSection fs1, fs2, fs;
+        long filesize = getsize(f1);
+        System.out.println("FILESIZE = " + filesize);
+
+
+
+        while (blocksize < filesize) {
+
+            System.out.println("BLOCKSIZE = " + blocksize);
 
             swapfiles = !swapfiles;
             String ftmp = f1;
             f1 = f2;
             f2 = ftmp;
 
+            wafc = AsynchronousFileChannel.open(Paths.get(f1));
+
             try {
-                fs1 = new FileSection(BufferSize, blocksize, false, f1);
-                fs2 = new FileSection(BufferSize, blocksize, true, f1);
-            } catch (EOFException e) {
+                blocks = FileBlock.getblocks(blocksize, bufsize, filesize, f1);
+            } catch (EndBlockException e){
                 e.printStackTrace();
                 return;
             }
 
-            try {
-                while (true) {
-                    if (fs1.peek() < fs2.peek()) {
-                        popfirst = true;
-                        abuf.asIntBuffer().put(fs1.pop());
-                    } else {
-                        popfirst = false;
-                        abuf.asIntBuffer().put(fs2.pop());
-                    }
-
-                    if (written % BufferSize == 0) {
-                        if (written > 0) {
-                            while (wresult != null && !wresult.isDone()) {
-                                //Waiting
-                            }
-                            wbuf.clear();
-                        }
-                        abuf.flip();
-
-                        if (written + BufferSize >= filesize){
-                            wbuf = abuf;
-                            abuf = ByteBuffer.allocate(toIntExact(filesize - written));
-                        } else {
-                            ByteBuffer tmp;
-                            tmp = wbuf;
-                            wbuf = abuf;
-                            abuf = tmp;
-                        }
-
-                        wresult = wafc.write(wbuf, wloc);
-
-                        wloc += BufferSize;
-                    }
-                    written += 1;
+            for (int i = 0; i<blocks.length; i+=2){
+                if (i + 1 < blocks.length){
+                    mergeblocks(blocks[i], blocks[i+1], wafc, bufsize);
+                    blocks[i] = null;
+                    blocks[i+1] = null;
+                } else {
+                    copyblock(blocks[i], wafc, bufsize);
+                    blocks[i] = null;
                 }
-            } catch (EOFException e){
-                //Do nothing - Should probably not use exceptions for control flow
             }
 
-            FileSection fs;
-            if (popfirst){
-                fs = fs2;
-            } else {
-                fs = fs1;
-            }
-
-            try {
-                while (true){
-                    abuf.asIntBuffer().put(fs.pop());
-
-                    if (written % BufferSize == 0) {
-                        while (wresult != null && !wresult.isDone()) {
-                            //Waiting
-                        }
-                        wbuf.clear();
-
-                        abuf.flip();
-
-                        if (written + BufferSize >= filesize){
-                            wbuf = abuf;
-                            abuf = ByteBuffer.allocate(toIntExact(filesize - written));
-                        } else {
-                            ByteBuffer tmp;
-                            tmp = wbuf;
-                            wbuf = abuf;
-                            abuf = tmp;
-                        }
-
-                        wresult = wafc.write(wbuf, wloc);
-
-                        wloc += BufferSize;
-                    }
-                    written += 1;
-                }
-            } catch (EOFException e){
-                //Do nothing - Should probably not use exceptions for control flow
-            }
-
-            while (wresult != null && !wresult.isDone()) {
-                //Waiting
-            }
+            //printfile(f2, bufsize);
 
             blocksize *= 2;
         }
-        wafc.close();
-        if (swapfiles){
+
+        if (swapfiles) {
             java.nio.file.Files.copy(Paths.get(f2), Paths.get(f1), REPLACE_EXISTING);
         }
     }
 
-    public static int[] read(String f1, long location, int size) throws IOException, EOFException {
+    private static void copyblock(FileBlock a, AsynchronousFileChannel afc, int bufsize) throws IOException {
+        Future wresult = null;
+        long TotalBlockSize = a.getBlocksize();
+        long written = 0;
+        long wlocation = a.getStartlocation();
+        if (bufsize > TotalBlockSize){
+            bufsize = Math.toIntExact(TotalBlockSize);
+        }
+
+        ByteBuffer abuf = ByteBuffer.allocate(bufsize);
+        ByteBuffer wbuf = ByteBuffer.allocate(bufsize);
+
+        try {
+            while (true) {
+                abuf.asIntBuffer().put(a.pop());
+
+                if (!abuf.hasRemaining()) {
+                    while (wresult != null && !wresult.isDone()) {
+                        //Waiting
+                    }
+                    wbuf.clear();
+                    abuf.flip();
+
+                    if (written + bufsize >= TotalBlockSize) {
+                        wbuf = abuf;
+                        abuf = ByteBuffer.allocate(toIntExact(TotalBlockSize - written));
+                    } else {
+                        ByteBuffer tmp;
+                        tmp = wbuf;
+                        wbuf = abuf;
+                        abuf = tmp;
+                        abuf.clear();
+                    }
+
+                    wresult = afc.write(wbuf, wlocation);
+
+                    wlocation += bufsize;
+                }
+            }
+        } catch (EndBlockException e){
+            //do nothing
+        }
+        while (wresult != null && !wresult.isDone()) {
+            //Waiting
+        }
+    }
+
+    private static void mergeblocks(FileBlock a, FileBlock b, AsynchronousFileChannel afc,
+                                    int bufsize) throws IOException {
+        Future wresult = null;
+        long TotalBlockSize = a.getBlocksize() + b.getBlocksize();
+        long written = 0;
+        long wlocation = a.getStartlocation();
+        if (bufsize > TotalBlockSize){
+            bufsize = Math.toIntExact(TotalBlockSize);
+        }
+        ByteBuffer abuf = ByteBuffer.allocate(bufsize);
+        ByteBuffer wbuf = ByteBuffer.allocate(bufsize);
+        try {
+            a.PrepareBlock();
+            b.PrepareBlock();
+            while (true) {
+                if (a.peek() <= b.peek()) {
+                    abuf.asIntBuffer().put(a.pop());
+                } else {
+                    abuf.asIntBuffer().put(b.pop());
+                }
+
+                if (!abuf.hasRemaining()) {
+                    while (wresult != null && !wresult.isDone()) {
+                        //Waiting
+                    }
+                    wbuf.clear();
+                    abuf.flip();
+
+                    if (written + bufsize >= TotalBlockSize) {
+                        wbuf = abuf;
+                        abuf = ByteBuffer.allocate(toIntExact(TotalBlockSize - written));
+                    } else {
+                        ByteBuffer tmp;
+                        tmp = wbuf;
+                        wbuf = abuf;
+                        abuf = tmp;
+                        abuf.clear();
+                    }
+
+                    wresult = afc.write(wbuf, wlocation);
+
+                    wlocation += bufsize;
+                }
+            }
+        } catch (EndBlockException e){
+            //do nothing
+        }
+        FileBlock f;
+        if (a.isdone()){
+            f = a;
+        } else {
+            f = b;
+        }
+        try {
+            while (true) {
+                abuf.asIntBuffer().put(f.pop());
+
+                if (!abuf.hasRemaining()) {
+                    while (wresult != null && !wresult.isDone()) {
+                        //Waiting
+                    }
+                    wbuf.clear();
+                    abuf.flip();
+
+                    if (written + bufsize >= TotalBlockSize) {
+                        wbuf = abuf;
+                        abuf = ByteBuffer.allocate(toIntExact(TotalBlockSize - written));
+                    } else {
+                        ByteBuffer tmp;
+                        tmp = wbuf;
+                        wbuf = abuf;
+                        abuf = tmp;
+                        abuf.clear();
+                    }
+
+                    wresult = afc.write(wbuf, wlocation);
+
+                    wlocation += bufsize;
+                }
+            }
+        } catch (EndBlockException e){
+            //do nothing
+        }
+        while (wresult != null && !wresult.isDone()) {
+            //Waiting
+        }
+    }
+
+    public static int[] read(String f1, long location, int size) throws IOException {
         if (location + size > getsize(f1)) {
             size = (int) (getsize(f1) - location);
-        }
-        if (size <= 0) {
-            throw new EOFException();
         }
         Path path = Paths.get(f1);
         AsynchronousFileChannel afc = AsynchronousFileChannel.open(path, READ);
@@ -177,13 +243,11 @@ public class ExternalSort {
     }
 
     public static void basicsort(String f1, int BufferSize) throws IOException {
-        try {
-            int[] a = read(f1, 0, 2 * BufferSize);
-            Arrays.sort(a);
-            write(f1, a);
-        } catch (EOFException e) {
-            e.printStackTrace();
-        }
+
+        int[] a = read(f1, 0, 2 * BufferSize);
+        Arrays.sort(a);
+        write(f1, a);
+
     }
 
     public static long getsize(String f1) throws IOException {
@@ -197,14 +261,12 @@ public class ExternalSort {
 
         int BufferSize;
         try {
-            BufferSize = toIntExact(Long.highestOneBit(maxmemory - 1) / 32);
-        } catch (ArithmeticException e){
+            BufferSize = toIntExact(Long.highestOneBit(maxmemory - 1) / 128);
+        } catch (ArithmeticException e) {
             BufferSize = 1073741824;
         }
 
-        //BufferSize = 65536;
-
-        System.out.println("MEMORY = " + BufferSize);
+        System.out.println("BUFSIZE = " + BufferSize);
 
         if (getsize(f1) < 2 * BufferSize) {
             System.out.println("BASIC SORT");
@@ -231,7 +293,7 @@ public class ExternalSort {
 
         int tmpbufsize = BufferSize;
 
-        for (int i=0; i<filesize/BufferSize; i++){
+        for (int i = 0; i <= filesize / BufferSize; i++) {
             while (!rfuture.isDone()) {
                 //Waiting
             }
@@ -245,39 +307,46 @@ public class ExternalSort {
                 }
             }
             wbuf.clear();
+            if (tmpbufsize != BufferSize) {
+                wbuf = ByteBuffer.allocate(tmpbufsize);
+                wbuf.clear();
+            }
             wbuf.asIntBuffer().put(st);
-            wbuf.flip();
             wfuture = wafc.write(wbuf, location);
             rbuf.clear();
             location += tmpbufsize;
-            System.out.println(location);
-            if (location > filesize){
+            if (location > filesize) {
                 throw new IllegalStateException();
-            } else if (location + tmpbufsize >= filesize){
+            } else if (location + tmpbufsize >= filesize) {
                 tmpbufsize = toIntExact(filesize - location);
                 if (tmpbufsize <= 0) {
                     break;
                 }
                 rbuf = ByteBuffer.allocate(tmpbufsize);
+                rbuf.clear();
             }
-            rfuture = rafc.read(rbuf, location);
 
+            rfuture = rafc.read(rbuf, location);
 
         }
 
         rafc.close();
         wafc.close();
 
-        merge(f2, f1, BufferSize);
+
+        merge(f1, f2, BufferSize);
 
         System.out.println(checkSum(f1));
     }
 
 
-    public static void printfile(String f1, int BufferSize) throws IOException, EOFException {
-        for (int i = 0; i < getsize(f1); i+= BufferSize){
-            System.out.println(Arrays.toString(read(f1, i, BufferSize)).replace("[","").replace("]","").replace(",","\n").replace(" ", ""));
+    public static void printfile(String f1, int BufferSize) throws IOException {
+        long location = 0;
+
+        for (int i = 0; i < getsize(f1); i += BufferSize) {
+            System.out.println(location + ":" + Arrays.toString(read(f1, i, BufferSize)).replace("[", "").replace("]", "").replace(",", "\n" + location++ + ":").replace(" ", ""));
         }
+
     }
 
 

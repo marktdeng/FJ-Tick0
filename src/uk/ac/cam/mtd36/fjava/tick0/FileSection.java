@@ -12,31 +12,27 @@ import static java.nio.file.StandardOpenOption.READ;
 
 public class FileSection {
     private int bufsize;
-    private long blocksize;
-    private long filesize;
-    private boolean offset;
+    private long blocksize, filesize, location;
+    private boolean offset, newblock;
     private ByteBuffer buf;
     private Future future;
     private AsynchronousFileChannel rafc;
-    private long location;
     private int[] st;
     private int stloc;
     private int previous;
 
 
-    public FileSection(int bufsize, long blocksize, boolean offset, String f) throws IOException, EOFException {
+    public FileSection(int bufsize, long blocksize, boolean offset, String f) throws IOException, EOFException, EndBlockException {
         this.rafc = AsynchronousFileChannel.open(Paths.get(f), READ);
         this.filesize = this.rafc.size();
-        System.out.println(filesize);
         location = (offset ? blocksize : 0);
         if (location + bufsize >= filesize){
-            this.bufsize = toIntExact(filesize - location);
+            bufsize = toIntExact(filesize - location);
             if (bufsize <= 0) {
                 throw new EOFException();
             }
-        } else {
-            this.bufsize = bufsize;
         }
+        this.bufsize = bufsize;
         this.blocksize = blocksize;
         this.offset = offset;
 
@@ -46,7 +42,15 @@ public class FileSection {
         read();
     }
 
-    private void read() throws EOFException, IOException {
+    public void read() throws EOFException, EndBlockException, IOException {
+        if (newblock){
+            newblock = false;
+            throw new EndBlockException();
+        }
+        if (bufsize <= 0) {
+            rafc.close();
+            throw new EOFException();
+        }
         while (!future.isDone()) {
             //Waiting
         }
@@ -55,39 +59,42 @@ public class FileSection {
         buf.asIntBuffer().get(st);
         stloc = 0;
         buf.clear();
+
         location += bufsize;
-        if ( (location + 1 / blocksize) % 2 == (offset ? 1 : 0) ){
+        if ( (location / blocksize) % 2 == (offset ? 0 : 1) ){
             location += blocksize;
+            newblock = true;
         }
-        if (location >= filesize){
+        if (location > filesize){
+            rafc.close();
             throw new EOFException();
         } else if (location + bufsize >= filesize){
             bufsize = toIntExact(filesize - location);
-            if (bufsize <= 0) {
-                rafc.close();
-                throw new EOFException();
-            }
+
             buf = ByteBuffer.allocate(bufsize);
         }
         future = rafc.read(buf, location);
+
     }
 
-    public int pop() throws EOFException, IOException {
+    public int pop() throws EOFException, IOException, EndBlockException {
         int result = st[stloc++];
+        System.out.println(stloc);
         if (stloc >= bufsize/4){
             read();
         }
-        if (previous != 0 && previous > result){
+        if (stloc != 1 && previous != 0 && previous > result){
             System.out.println(previous + " - " + result);
+            System.out.println(location);
             throw new IllegalStateException();
         }
         previous = result;
-        System.out.println(result);
         return result;
     }
 
     public int peek() {
-        return st[stloc];
+        int result = st[stloc];
+        return result;
     }
 
 }
