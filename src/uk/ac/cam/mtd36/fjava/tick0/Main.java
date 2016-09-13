@@ -1,8 +1,5 @@
 package uk.ac.cam.mtd36.fjava.tick0;
 
-import java.util.Arrays;
-import java.util.LinkedList;
-
 public class Main {
         public static void main(String[] args) throws Exception {
             long startTime = System.currentTimeMillis();
