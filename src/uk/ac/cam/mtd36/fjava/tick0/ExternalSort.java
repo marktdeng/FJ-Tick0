@@ -1,11 +1,16 @@
 package uk.ac.cam.mtd36.fjava.tick0;
 
+import sun.reflect.generics.reflectiveObjects.NotImplementedException;
+
+import java.io.BufferedOutputStream;
+import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousFileChannel;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.DigestInputStream;
@@ -15,7 +20,6 @@ import java.util.Arrays;
 import java.util.concurrent.Future;
 
 import static java.lang.Math.toIntExact;
-import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 import static java.nio.file.StandardOpenOption.*;
 
 public class ExternalSort {
@@ -25,67 +29,80 @@ public class ExternalSort {
 
         long fileSize = getsize(f1);
 
+        System.out.println("FILESIZE: " + fileSize);
+
         boolean swapFiles = true;
 
-        while (blockSize * 2 < fileSize) {
+        while (blockSize < fileSize) {
+            System.out.println("LOOP");
             String tmp = f1;
             f1 = f2;
             f2 = tmp;
 
+            System.out.println(f1 + ">" + f2);
+
             swapFiles = !swapFiles;
 
-            FileWriter writer = new FileWriter(f2, bufSize, fileSize);
+            DataOutputStream writer = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(new RandomAccessFile(f2, "rw").getFD()), bufSize));
             long loc;
-            for (loc = 0; loc < fileSize; loc += blockSize * 2){
+            for (loc = 0; loc + blockSize*2 < fileSize; loc += blockSize * 2){
                 mergeBlocks(f1, writer, bufSize, blockSize, blockSize, loc);
             }
-            loc -= blockSize * 2;
+            System.out.println("LOCATION: " + loc);
             if (fileSize - loc > blockSize){
                 long bSize = fileSize - loc - blockSize;
                 mergeBlocks(f1, writer, bufSize, blockSize, bSize, loc);
             } else {
                 long bSize = fileSize - loc;
-                System.out.println("FILESIZE: " + fileSize + "LOC: " + loc);
                 copyBlock(f1, writer, bufSize, bSize, loc);
             }
-
             blockSize *= 2;
+            writer.flush();
         }
 
         if (swapFiles){
-            Files.copy(Paths.get(f2), Paths.get(f1), REPLACE_EXISTING);
-        }
-    }
-    
-    private static void mergeBlocks(String file, FileWriter writer, int bufSize,
-                                    long blockSize1, long blockSize2, long loc) throws IOException{
-        FileBlock b1 = new FileBlock(file, bufSize, blockSize1, loc);
-        FileBlock b2 = new FileBlock(file, bufSize, blockSize2, loc + blockSize1);
-        while (!b1.hasRemaining() && b2.hasRemaining()){
-            if (b1.peek() > b2.peek()){
-                writer.add(b1.pop());
-            } else {
-                writer.add(b2.pop());
+            FileBlock b = new FileBlock(f2, bufSize, fileSize, 0, 1);
+            DataOutputStream writer = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(new RandomAccessFile(f2, "rw").getFD()), bufSize));
+            while (b.hasRemaining()){
+                writer.writeInt(b.pop());
             }
-        }
-        FileBlock b;
-        if (b1.hasRemaining()){
-            b = b1;
-        } else {
-            b = b2;
-        }
-        while (b.hasRemaining()){
-            writer.add(b.pop());
+            writer.flush();
         }
     }
 
-    private static void copyBlock(String file, FileWriter writer, int bufSize, long blocksize, long loc) throws IOException {
-        System.out.println("COPY");
-        FileBlock b = new FileBlock(file, bufSize, blocksize, loc);
-        if (b.hasRemaining()) {
-            while (b.hasRemaining()) {
-                writer.add(b.pop());
+    private static void mergeBlocks(String file, DataOutputStream writer, int bufSize,
+                                    long blockSize1, long blockSize2, long loc) throws IOException{
+        try {
+            System.out.println("MERGE B1: " + blockSize1 + " B2: " + blockSize2 + " LOC: " + loc);
+            FileBlock b1 = new FileBlock(file, bufSize, blockSize1, loc, 1);
+            FileBlock b2 = new FileBlock(file, bufSize, blockSize2, loc + blockSize1, 2);
+            while (b1.hasRemaining() && b2.hasRemaining()) {
+                if (b1.peek() > b2.peek()) {
+                    writer.writeInt(b1.pop());
+                } else {
+                    writer.writeInt(b2.pop());
+                }
             }
+            FileBlock b;
+            if (b1.hasRemaining()) {
+                b = b1;
+            } else {
+                b = b2;
+            }
+            while (b.hasRemaining()) {
+                writer.writeInt(b.pop());
+            }
+        } catch (NotImplementedException e){
+            e.printStackTrace();
+            printfile(file, bufSize);
+        }
+    }
+
+    private static void copyBlock(String file, DataOutputStream writer, int bufSize, long blockSize, long loc) throws IOException {
+        System.out.println("COPY B: " + blockSize + " LOC: " + loc);
+        FileBlock b = new FileBlock(file, bufSize, blockSize, loc, 1);
+        while (b.hasRemaining()) {
+            writer.writeInt(b.pop());
         }
     }
 
@@ -121,7 +138,7 @@ public class ExternalSort {
 
     public static void basicsort(String f1, int BufferSize) throws IOException {
 
-        int[] a = read(f1, 0, 2 * BufferSize);
+        int[] a = read(f1, 0, 64 * BufferSize);
         Arrays.sort(a);
         write(f1, a);
 
@@ -145,7 +162,7 @@ public class ExternalSort {
 
         System.out.println("BUFSIZE = " + BufferSize);
 
-        if (getsize(f1) < 2 * BufferSize) {
+        if (getsize(f1) < 32 * BufferSize) {
             System.out.println("BASIC SORT");
             basicsort(f1, BufferSize);
             System.out.println(checkSum(f1));
@@ -221,7 +238,9 @@ public class ExternalSort {
         long location = 0;
 
         for (int i = 0; i < getsize(f1); i += BufferSize) {
-            System.out.println(location + ":" + Arrays.toString(read(f1, i, BufferSize)).replace("[", "").replace("]", "").replace(",", "\n" + location++ + ":").replace(" ", ""));
+            for (int j:read(f1,i,BufferSize)) {
+                System.out.println(location++ + ":" + j);
+            }
         }
 
     }

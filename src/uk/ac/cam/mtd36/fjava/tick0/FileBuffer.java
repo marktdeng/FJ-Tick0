@@ -20,6 +20,7 @@ public class FileBuffer {
         if (bufSize % 4 != 0){
             System.exit(1);
         }
+        System.out.println("STARTLOC: " + startLoc + " SIZE: " + bufSize);
         this.afc = AsynchronousFileChannel.open(Paths.get(file), READ);
         this.buf = ByteBuffer.allocate(bufSize);
         this.future = afc.read(buf, startLoc);
@@ -61,12 +62,13 @@ public class FileBuffer {
         return ibuf.array();
     }
 
-    public boolean hasRemaining() {
-        if (!isReady){
+    public boolean hasRemaining() throws IOException {
+        waitReady();
+        if (ibuf.hasRemaining()) {
             return true;
         } else {
-            System.out.println("REMAINING BUFFER: " + ibuf.remaining());
-            return ibuf.hasRemaining();
+            afc.close();
+            return false;
         }
     }
 }
