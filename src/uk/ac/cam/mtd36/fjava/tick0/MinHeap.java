@@ -32,9 +32,9 @@ public class MinHeap {
     }
 
     private void swap(int a, int b){
-        FileStream temp = streams[a];
+        FileStream tmp = streams[a];
         streams[a] = streams[b];
-        streams[b] = temp;
+        streams[b] = tmp;
     }
 
     private void heapifyUp(int i){
@@ -49,25 +49,25 @@ public class MinHeap {
     }
 
     private void heapify(int i){
-        int leftIndex = 2*i + 1;
-        int rightIndex = 2*i + 2;
-        int smallestIndex;
+        int left = 2*i + 1;
+        int right = 2*i + 2;
+        int smallest;
 
-        if (leftIndex >= size && rightIndex >= size){
+        if (left >= size && right >= size){
             return;
-        } else if (rightIndex >= size){
-            smallestIndex = leftIndex;
+        } else if (right >= size){
+            smallest = left;
         } else {
-            if (streams[leftIndex].peek() <= streams[rightIndex].peek()){
-                smallestIndex = leftIndex;
+            if (streams[left].peek() <= streams[right].peek()){
+                smallest = left;
             } else {
-                smallestIndex = rightIndex;
+                smallest = right;
             }
         }
 
-        if (streams[i].peek() > streams[smallestIndex].peek()){
-            swap(i, smallestIndex);
-            heapify(smallestIndex);
+        if (streams[i].peek() > streams[smallest].peek()){
+            swap(i, smallest);
+            heapify(smallest);
         }
     }
 }
