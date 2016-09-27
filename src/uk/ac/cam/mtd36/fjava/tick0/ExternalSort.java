@@ -1,5 +1,7 @@
 package uk.ac.cam.mtd36.fjava.tick0;
 
+import sun.reflect.generics.reflectiveObjects.NotImplementedException;
+
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
@@ -8,15 +10,20 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.PriorityQueue;
+import java.util.concurrent.PriorityBlockingQueue;
 
 import static java.lang.Math.toIntExact;
 
 public class ExternalSort {
     private static int memSize; //in bytes
     private static long fileSize; //in number of ints
+    private static FileWriter writer ;
 
 
     public static void sort(String f1, String f2) throws IOException {
+        writer = new FileWriter("tick0.log", true);
+
+        writer.write(f1 + "\r\n");
 
         long maxMemory = Runtime.getRuntime().maxMemory();
         try {
@@ -99,12 +106,13 @@ public class ExternalSort {
         int lastBlockSize = toIntExact(fileSize % blockSize);
         int numBlocks = toIntExact(fileSize/blockSize) + 1;
         int bufSize = toIntExact(Long.highestOneBit(memSize/(numBlocks * 16)));
-        System.out.println("NUMBLOCKS: " + numBlocks + " BLOCKSIZE: " + blockSize + " BUFSIZE: " + bufSize);
+        //System.out.println("NUMBLOCKS: " + numBlocks + " BLOCKSIZE: " + blockSize + " BUFSIZE: " + bufSize);
         if (bufSize > blockSize * 4){
             bufSize = toIntExact(blockSize * 4);
         }
 
-        PriorityQueue<FileStream> blocks = new PriorityQueue<>(new FileStreamComparator());
+        //PriorityQueue<FileStream> blocks = new PriorityQueue<>(new FileStreamComparator());
+        MinHeap blocks = new MinHeap(numBlocks);
 
         for (int i = 0; i < numBlocks; i++){
             if (i == numBlocks - 1){
@@ -114,10 +122,12 @@ public class ExternalSort {
             }
         }
         while (!blocks.isEmpty()){
-            FileStream f = blocks.poll();
-            outStream.writeInt(f.pop());
+            FileStream f = blocks.pop();
+            int result = f.pop();
+            outStream.writeInt(result);
+            writer.write(result + "\n");
             if (f.ready()){
-                blocks.offer(f);
+                blocks.add(f);
             }
         }
         outStream.flush();

@@ -3,6 +3,8 @@ package uk.ac.cam.mtd36.fjava.tick0;
 import java.io.*;
 
 public class FileStream {
+    public static int staticBlockNum = 0;
+    public int blockNum = staticBlockNum++;
     private DataInputStream input;
     private long blockSize;
     private int head;
@@ -12,6 +14,8 @@ public class FileStream {
         //bufSize in bytes
         //blockSize, startLoc in number of ints
 
+
+
         RandomAccessFile file = new RandomAccessFile(fileName, "r");
         input = new DataInputStream(new BufferedInputStream(new FileInputStream(file.getFD()), bufSize));
 
@@ -19,7 +23,7 @@ public class FileStream {
         read = 0;
 
         long skipped = input.skip(startLoc * 4);
-        assert (skipped == startLoc*4);
+        assert skipped == startLoc*4;
 
         head = input.readInt();
         read++;
@@ -38,7 +42,12 @@ public class FileStream {
         return result;
     }
 
-    public boolean ready(){
-        return (read <= blockSize);
+    public boolean ready() throws IOException {
+        if (read <= blockSize){
+            return true;
+        } else {
+            input.close();
+            return false;
+        }
     }
 }
