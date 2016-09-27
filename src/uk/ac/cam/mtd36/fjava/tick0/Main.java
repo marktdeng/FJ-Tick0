@@ -3,7 +3,9 @@ package uk.ac.cam.mtd36.fjava.tick0;
 public class Main {
         public static void main(String[] args) throws Exception {
             long startTime = System.currentTimeMillis();
-            ExternalSort.sort("test-suite/test" + 17 + "a.dat", "test-suite/test" + 17 + "b.dat");
+
+            int filenum = 16;
+            ExternalSort.sort("test-suite/test" + filenum + "a.dat", "test-suite/test" + filenum + "b.dat");
 
             //for (int i=1; i<=17; i++) {
             //    System.out.println("FILE " + i);
