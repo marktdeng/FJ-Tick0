@@ -1,7 +1,5 @@
 package uk.ac.cam.mtd36.fjava.tick0;
 
-import sun.reflect.generics.reflectiveObjects.NotImplementedException;
-
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
@@ -9,25 +7,19 @@ import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
-import java.util.PriorityQueue;
-import java.util.concurrent.PriorityBlockingQueue;
-
 import static java.lang.Math.toIntExact;
 
 public class ExternalSort {
     private static int memSize; //in bytes
+    private static int blockSize; //in number of ints
     private static long fileSize; //in number of ints
-    private static FileWriter writer ;
 
 
     public static void sort(String f1, String f2) throws IOException {
-        writer = new FileWriter("tick0.log", true);
-
-        writer.write(f1 + "\r\n");
-
+        //Get amount of memory available
         long maxMemory = Runtime.getRuntime().maxMemory();
         try {
-            memSize = toIntExact(Long.highestOneBit(maxMemory - 1) / 64);
+            memSize = toIntExact(Long.highestOneBit(maxMemory - 1) / 16);
         } catch (ArithmeticException e) {
             memSize = 1073741824;
         }
@@ -41,7 +33,7 @@ public class ExternalSort {
     private static boolean prepare(String f1, String f2) throws IOException {
         RandomAccessFile readFile = new RandomAccessFile(f1, "r");
 
-        int blockSize = memSize*4;
+        blockSize = memSize;
         DataInputStream inStream = new DataInputStream(new BufferedInputStream(new FileInputStream(readFile.getFD()), blockSize));
 
         fileSize = readFile.length() / 4;
@@ -52,10 +44,13 @@ public class ExternalSort {
             RandomAccessFile writeFile = new RandomAccessFile(f1, "rw");
             DataOutputStream outStream = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(writeFile.getFD()), blockSize));
             byte[] bArray = new byte[toIntExact(fileSize*4)];
-            inStream.readFully(bArray);
+            inStream.readFully(bArray); //Read whole file
+
+            //Convert byte array to int array
             IntBuffer intBuf = ByteBuffer.wrap(bArray).asIntBuffer();
             int[] iArray = new int[toIntExact(fileSize)];
             intBuf.get(iArray);
+
             Arrays.sort(iArray);
             for (int i : iArray) {
                 outStream.writeInt(i);
@@ -64,6 +59,7 @@ public class ExternalSort {
             return false;
         } else {
             //Need to use merge sort
+            //Sort blocks of file with java default sort
 
             RandomAccessFile writeFile = new RandomAccessFile(f2, "rw");
             DataOutputStream outStream = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(writeFile.getFD()), blockSize));
@@ -77,14 +73,10 @@ public class ExternalSort {
                     tmpBufSize = toIntExact((fileSize - loc));
                 }
 
-                //byte[] bArray = new byte[tmpBufSize];
                 int[] iArray = new int[tmpBufSize];
                 for (int i = 0; i< tmpBufSize; i++){
                     iArray[i] = inStream.readInt();
                 }
-                //inStream.readFully(bArray, loc * 4, tmpBufSize);
-                //IntBuffer intBuf = ByteBuffer.wrap(bArray).asIntBuffer();
-                //intBuf.get(iArray);
 
                 Arrays.sort(iArray);
                 for (int i : iArray) {
@@ -100,20 +92,18 @@ public class ExternalSort {
 
     private static void merge(String f1, String f2) throws IOException {
         RandomAccessFile writeFile = new RandomAccessFile(f1, "rw");
-        DataOutputStream outStream = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(writeFile.getFD()), memSize/32));
+        DataOutputStream outStream = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(writeFile.getFD()), memSize/8));
 
-        long blockSize = memSize*4;
         int lastBlockSize = toIntExact(fileSize % blockSize);
         int numBlocks = toIntExact(fileSize/blockSize) + 1;
-        int bufSize = toIntExact(Long.highestOneBit(memSize/(numBlocks * 16)));
-        //System.out.println("NUMBLOCKS: " + numBlocks + " BLOCKSIZE: " + blockSize + " BUFSIZE: " + bufSize);
+        int bufSize = toIntExact(Long.highestOneBit(memSize*4/(numBlocks)));
         if (bufSize > blockSize * 4){
             bufSize = toIntExact(blockSize * 4);
         }
 
-        //PriorityQueue<FileStream> blocks = new PriorityQueue<>(new FileStreamComparator());
         MinHeap blocks = new MinHeap(numBlocks);
 
+        //Add all blocks to a heap
         for (int i = 0; i < numBlocks; i++){
             if (i == numBlocks - 1){
                 blocks.add(new FileStream(f2, bufSize, lastBlockSize, i*blockSize));
@@ -121,11 +111,12 @@ public class ExternalSort {
                 blocks.add(new FileStream(f2, bufSize, blockSize, i * blockSize));
             }
         }
+
+        //pop smallest item from heap and reinsert
         while (!blocks.isEmpty()){
             FileStream f = blocks.pop();
             int result = f.pop();
             outStream.writeInt(result);
-            writer.write(result + "\n");
             if (f.ready()){
                 blocks.add(f);
             }
@@ -135,7 +126,7 @@ public class ExternalSort {
 
     public static void printFile(String f) throws IOException{
         RandomAccessFile readFile = new RandomAccessFile(f, "r");
-        int bufSize = memSize/16;
+        int bufSize = memSize;
         DataInputStream inStream = new DataInputStream(new BufferedInputStream(new FileInputStream(readFile.getFD()), bufSize));
         for (int i = 0; i < fileSize; i++){
             System.out.println(inStream.readInt());
